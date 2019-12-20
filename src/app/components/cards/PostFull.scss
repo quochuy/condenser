@@ -8,6 +8,7 @@
   padding: 2rem 1rem 1rem 1rem;
   margin: 0 auto;
   max-width: 54rem;
+  position: relative;
   @include themify($themes) {
     border-radius: themed('roundedCorners');
     border: themed('border');
@@ -105,7 +106,7 @@
 }
 
 .PostFull__body {
-  padding: 1rem 0 2rem 0;
+  padding: 1rem 0 1rem 0;
   clear: left;
   a {
     @extend .link;
@@ -125,11 +126,6 @@
   .RightShare__Menu {
     @include MQ(FL) {
       text-align: right;
-    }
-  }
-  .VerticalMenu > li > a {
-    @include themify($themes) {
-      fill: themed('textColorSecondary');
     }
   }
   span {
@@ -222,8 +218,6 @@ input.share-box {
 @media screen and (max-width: 39.9375em) {
   .Post {
     width: 100%;
-    overflow-x: hidden;
-    overflow-y: visible;
   }
   .PostFull__footer > .column {
     -webkit-box-flex: 0;

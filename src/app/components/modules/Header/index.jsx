@@ -2,31 +2,38 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import { Link } from 'react-router';
 import { connect } from 'react-redux';
+import { parseJsonTags } from 'app/utils/StateFunctions';
 import Headroom from 'react-headroom';
-import Icon from 'app/components/elements/Icon';
 import resolveRoute from 'app/ResolveRoute';
 import tt from 'counterpart';
 import { APP_NAME } from 'app/client_config';
 import SortOrder from 'app/components/elements/SortOrder';
-import SearchInput from 'app/components/elements/SearchInput';
+import ElasticSearchInput from 'app/components/elements/ElasticSearchInput';
 import IconButton from 'app/components/elements/IconButton';
 import DropdownMenu from 'app/components/elements/DropdownMenu';
 import * as userActions from 'app/redux/UserReducer';
 import * as appActions from 'app/redux/AppReducer';
+import { startPolling } from 'app/redux/PollingSaga';
+import { actions as fetchDataSagaActions } from 'app/redux/FetchDataSaga';
 import Userpic from 'app/components/elements/Userpic';
 import { SIGNUP_URL } from 'shared/constants';
 import SteemLogo from 'app/components/elements/SteemLogo';
-import normalizeProfile from 'app/utils/NormalizeProfile';
 import Announcement from 'app/components/elements/Announcement';
 import GptAd from 'app/components/elements/GptAd';
+import { Map } from 'immutable';
+import ReactMutationObserver from '../../utils/ReactMutationObserver';
 
 class Header extends React.Component {
     static propTypes = {
         current_account_name: PropTypes.string,
-        account_meta: PropTypes.object,
+        display_name: PropTypes.string,
         category: PropTypes.string,
         order: PropTypes.string,
         pathname: PropTypes.string,
+        getUnreadAccountNotifications: PropTypes.func,
+        startNotificationsPolling: PropTypes.func,
+        loggedIn: PropTypes.bool,
+        unreadNotificationCount: PropTypes.number,
     };
 
     constructor(props) {
@@ -37,6 +44,17 @@ class Header extends React.Component {
             showAd: false,
             showAnnouncement: this.props.showAnnouncement,
         };
+    }
+
+    componentWillMount() {
+        const {
+            loggedIn,
+            current_account_name,
+            startNotificationsPolling,
+        } = this.props;
+        if (loggedIn) {
+            startNotificationsPolling(current_account_name);
+        }
     }
 
     componentDidMount() {
@@ -113,45 +131,55 @@ class Header extends React.Component {
             vertical,
             nightmodeEnabled,
             toggleNightmode,
-            userPath,
             showSidePanel,
             navigate,
-            account_meta,
+            display_name,
+            content,
             walletUrl,
+            unreadNotificationCount,
         } = this.props;
 
-        const { showAd, showAnnouncement } = this.state;
+        let { showAd, showAnnouncement } = this.state;
 
         /*Set the document.title on each header render.*/
         const route = resolveRoute(pathname);
-        let home_account = false;
+        let gptTags = [];
         let page_title = route.page;
-
         let sort_order = '';
         let topic = '';
         let page_name = null;
         if (route.page === 'PostsIndex') {
             sort_order = route.params[0];
             if (sort_order === 'home') {
-                page_title = tt('header_jsx.home');
-                const account_name = route.params[1];
-                if (
-                    current_account_name &&
-                    account_name.indexOf(current_account_name) === 1
-                )
-                    home_account = true;
+                page_title = 'My Friends'; //tt('header_jsx.home');
             } else {
-                topic = route.params.length > 1 ? route.params[1] : '';
-                const type =
-                    route.params[0] == 'payout_comments' ? 'comments' : 'posts';
+                topic = route.params.length > 1 ? route.params[1] || '' : '';
+                gptTags = [topic];
+
                 let prefix = route.params[0];
                 if (prefix == 'created') prefix = 'New';
-                if (prefix == 'payout') prefix = 'Pending payout';
-                if (prefix == 'payout_comments') prefix = 'Pending payout';
-                if (topic !== '') prefix += ` ${topic}`;
-                page_title = `${prefix} ${type}`;
+                if (prefix == 'payout') prefix = 'Pending';
+                if (prefix == 'payout_comments') prefix = 'Pending';
+                if (prefix == 'muted') prefix = 'Muted';
+                page_title = prefix;
+                if (topic !== '') {
+                    let name = this.props.community.getIn(
+                        [topic, 'title'],
+                        '#' + topic
+                    );
+                    if (name == '#my') name = 'My Communities';
+                    page_title = `${name} / ${page_title}`;
+                } else {
+                    page_title += ' posts';
+                }
             }
         } else if (route.page === 'Post') {
+            if (content) {
+                const user = `${route.params[1]}`.replace('@', '');
+                const slug = `${route.params[2]}`;
+                const post = content.get(`${user}/${slug}`);
+                gptTags = post ? parseJsonTags(post) : [];
+            }
             sort_order = '';
             topic = route.params[0];
         } else if (route.page == 'SubmitPost') {
@@ -160,14 +188,13 @@ class Header extends React.Component {
             page_title = tt('navigation.privacy_policy');
         } else if (route.page == 'Tos') {
             page_title = tt('navigation.terms_of_service');
-        } else if (route.page == 'RecoverAccountStep1') {
-            page_title = tt('header_jsx.stolen_account_recovery');
+        } else if (route.page == 'CommunityRoles') {
+            page_title = 'Community Roles';
         } else if (route.page === 'UserProfile') {
-            let user_name = route.params[0].slice(1);
-            const name = account_meta
-                ? normalizeProfile(account_meta.toJS()).name
-                : null;
-            const user_title = name ? `${name} (@${user_name})` : user_name;
+            const user_name = route.params[0].slice(1);
+            const user_title = display_name
+                ? `${display_name} (@${user_name})`
+                : user_name;
             page_title = user_title;
             if (route.params[1] === 'followers') {
                 page_title = tt('header_jsx.people_following', {
@@ -179,23 +206,17 @@ class Header extends React.Component {
                     username: user_title,
                 });
             }
-            if (route.params[1] === 'curation-rewards') {
-                page_title = tt('header_jsx.curation_rewards_by', {
-                    username: user_title,
-                });
-            }
-            if (route.params[1] === 'author-rewards') {
-                page_title = tt('header_jsx.author_rewards_by', {
-                    username: user_title,
-                });
-            }
-            if (route.params[1] === 'recent-replies') {
+            if (route.params[1] === 'replies') {
                 page_title = tt('header_jsx.replies_to', {
                     username: user_title,
                 });
             }
-            // @user/"posts" is deprecated in favor of "comments" as of oct-2016 (#443)
-            if (route.params[1] === 'posts' || route.params[1] === 'comments') {
+            if (route.params[1] === 'posts') {
+                page_title = tt('header_jsx.posts_by', {
+                    username: user_title,
+                });
+            }
+            if (route.params[1] === 'comments') {
                 page_title = tt('header_jsx.comments_by', {
                     username: user_title,
                 });
@@ -216,12 +237,9 @@ class Header extends React.Component {
         )
             document.title = page_title + ' — ' + APP_NAME;
 
-        const logo_link =
-            resolveRoute(pathname).params &&
-            resolveRoute(pathname).params.length > 1 &&
-            this.last_sort_order
-                ? '/' + this.last_sort_order
-                : current_account_name ? `/@${current_account_name}/feed` : '/';
+        //const _feed = current_account_name && `/@${current_account_name}/feed`;
+        //const logo_link = _feed && pathname != _feed ? _feed : '/';
+        const logo_link = '/';
 
         //TopRightHeader Stuff
         const defaultNavigate = e => {
@@ -246,143 +264,160 @@ class Header extends React.Component {
             </Link>
         );
 
-        const feed_link = `/@${username}/feed`;
-        const replies_link = `/@${username}/recent-replies`;
+        const replies_link = `/@${username}/replies`;
         const account_link = `/@${username}`;
         const comments_link = `/@${username}/comments`;
-        const wallet_link = `${walletUrl}/@${username}`;
         const settings_link = `/@${username}/settings`;
-        const pathCheck = userPath === '/submit.html' ? true : null;
+        const notifs_link = `/@${username}/notifications`;
+        const wallet_link = `${walletUrl}/@${username}`;
+        const notif_label =
+            tt('g.notifications') +
+            (unreadNotificationCount > 0
+                ? ` (${unreadNotificationCount})`
+                : '');
 
         const user_menu = [
-            {
-                link: feed_link,
-                icon: 'home',
-                value: tt('g.feed'),
-            },
-            { link: account_link, icon: 'profile', value: tt('g.blog') },
-            { link: comments_link, icon: 'replies', value: tt('g.comments') },
-            {
-                link: replies_link,
-                icon: 'reply',
-                value: tt('g.replies'),
-            },
-            {
-                link: wallet_link,
-                icon: 'wallet',
-                value: tt('g.wallet'),
-            },
-
+            { link: account_link, icon: 'profile', value: tt('g.profile') },
+            { link: notifs_link, icon: 'clock', value: notif_label },
+            { link: comments_link, icon: 'chatbox', value: tt('g.comments') },
+            { link: replies_link, icon: 'reply', value: tt('g.replies') },
+            //{ link: settings_link, icon: 'cog', value: tt('g.settings') },
             {
                 link: '#',
                 icon: 'eye',
                 onClick: toggleNightmode,
                 value: tt('g.toggle_nightmode'),
             },
-            { link: settings_link, icon: 'cog', value: tt('g.settings') },
-            loggedIn
-                ? {
-                      link: '#',
-                      icon: 'enter',
-                      onClick: logout,
-                      value: tt('g.logout'),
-                  }
-                : { link: '#', onClick: showLogin, value: tt('g.login') },
+            { link: wallet_link, icon: 'wallet', value: tt('g.wallet') },
+            {
+                link: '#',
+                icon: 'enter',
+                onClick: logout,
+                value: tt('g.logout'),
+            },
         ];
+        showAd = false; // TODO: fix header ad overlap bug
+        const headerMutated = (mutation, discconnectObserver) => {
+            if (mutation.target.id.indexOf('google_ads_iframe_') !== -1) {
+                this.gptAdRendered();
+                if (typeof discconnectObserver === 'function') {
+                    discconnectObserver();
+                }
+            }
+        };
         return (
-            <Headroom
-                onUnpin={e => this.headroomOnUnpin(e)}
-                onUnfix={e => this.headroomOnUnfix(e)}
-            >
-                <header className="Header">
-                    {showAnnouncement && (
-                        <Announcement onClose={e => this.hideAnnouncement(e)} />
-                    )}
-                    {/* If announcement is shown, ad will not render unless it's in a parent div! */}
-                    <div style={showAd ? {} : { display: 'none' }}>
-                        <GptAd
-                            type="Freestar"
-                            id="steemit_728x90_970x90_970x250_320x50_ATF"
-                        />
-                    </div>
-
-                    <nav className="row Header__nav">
-                        <div className="small-5 large-4 columns Header__logotype">
-                            {/*LOGO*/}
-                            <Link to={logo_link}>
-                                <SteemLogo />
-                            </Link>
+            <ReactMutationObserver onChildListChanged={headerMutated}>
+                <Headroom
+                    onUnpin={e => this.headroomOnUnpin(e)}
+                    onUnfix={e => this.headroomOnUnfix(e)}
+                >
+                    <header className="Header">
+                        {showAnnouncement && (
+                            <Announcement
+                                onClose={e => this.hideAnnouncement(e)}
+                            />
+                        )}
+                        <div className="beta-disclaimer">
+                            Viewing <strong>Steemit.com beta</strong>. Note that
+                            availability of features or service may change at
+                            any time.
                         </div>
-
-                        <div className="large-4 columns show-for-large large-centered Header__sort">
-                            {/*SORT*/}
-                            <SortOrder
-                                sortOrder={order}
-                                topic={category === 'feed' ? '' : category}
-                                horizontal={true}
-                                pathname={pathname}
+                        {/* If announcement is shown, ad will not render unless it's in a parent div! */}
+                        <div style={showAd ? {} : { display: 'none' }}>
+                            <GptAd
+                                tags={gptTags}
+                                type="Freestar"
+                                id="bsa-zone_1566493796250-1_123456"
                             />
                         </div>
-                        <div className="small-7 large-4 columns Header__buttons">
-                            {/*NOT LOGGED IN SIGN IN AND SIGN UP LINKS*/}
-                            {!loggedIn && (
-                                <span className="Header__user-signup show-for-medium">
-                                    <a
-                                        className="Header__login-link"
-                                        href="/login.html"
-                                        onClick={showLogin}
-                                    >
-                                        {tt('g.login')}
-                                    </a>
-                                    <a
-                                        className="Header__signup-link"
-                                        href={SIGNUP_URL}
-                                    >
-                                        {tt('g.sign_up')}
+
+                        <nav className="row Header__nav">
+                            <div className="small-6 medium-4 large-4 columns Header__logotype">
+                                <Link to={logo_link}>
+                                    <SteemLogo />
+                                </Link>
+                            </div>
+
+                            <div className="large-4 columns show-for-large large-centered Header__sort">
+                                {/*
+                                <SortOrder
+                                    sortOrder={order}
+                                    topic={category === 'feed' ? '' : category}
+                                    horizontal
+                                    pathname={pathname}
+                                />
+                                */}
+                            </div>
+
+                            <div className="small-6 medium-8 large-4 columns Header__buttons">
+                                {/*NOT LOGGED IN SIGN IN AND SIGN UP LINKS*/}
+                                {!loggedIn && (
+                                    <span className="Header__user-signup show-for-medium">
+                                        <a
+                                            className="Header__login-link"
+                                            href="/login.html"
+                                            onClick={showLogin}
+                                        >
+                                            {tt('g.login')}
+                                        </a>
+                                        <a
+                                            className="Header__signup-link"
+                                            href={SIGNUP_URL}
+                                        >
+                                            {tt('g.sign_up')}
+                                        </a>
+                                    </span>
+                                )}
+
+                                {/*CUSTOM SEARCH*/}
+                                <span className="Header__search--desktop">
+                                    <ElasticSearchInput />
+                                </span>
+                                <span className="Header__search">
+                                    <a href="/search">
+                                        <IconButton icon="magnifyingGlass" />
                                     </a>
                                 </span>
-                            )}
 
-                            {/*CUSTOM SEARCH*/}
-                            <span className="Header__search--desktop">
-                                <SearchInput />
-                            </span>
-                            <span className="Header__search">
-                                <a href="/static/search.html">
-                                    <IconButton icon="magnifyingGlass" />
-                                </a>
-                            </span>
-
-                            {/*SUBMIT STORY*/}
-                            {submit_story}
-                            {/*USER AVATAR */}
-                            {loggedIn && (
-                                <DropdownMenu
-                                    className={'Header__usermenu'}
-                                    items={user_menu}
-                                    title={username}
-                                    el="span"
-                                    selected={tt('g.rewards')}
-                                    position="left"
-                                >
-                                    <li className={'Header__userpic '}>
-                                        <span title={username}>
+                                {/*SUBMIT STORY*/}
+                                {submit_story}
+                                {/*USER AVATAR */}
+                                {loggedIn && (
+                                    <DropdownMenu
+                                        className={'Header__usermenu'}
+                                        items={user_menu}
+                                        title={username}
+                                        el="span"
+                                        position="left"
+                                    >
+                                        <li className={'Header__userpic '}>
                                             <Userpic account={username} />
-                                        </span>
-                                    </li>
-                                </DropdownMenu>
-                            )}
-                            {/*HAMBURGER*/}
-                            <span
-                                onClick={showSidePanel}
-                                className="toggle-menu Header__hamburger"
-                            >
-                                <span className="hamburger" />
-                            </span>
-                        </div>
-                    </nav>
-                </header>
-            </Headroom>
+                                        </li>
+                                        {unreadNotificationCount > 0 && (
+                                            <div
+                                                className={
+                                                    'Header__notification'
+                                                }
+                                            >
+                                                <span>
+                                                    {unreadNotificationCount}
+                                                </span>
+                                            </div>
+                                        )}
+                                    </DropdownMenu>
+                                )}
+                                {/*HAMBURGER*/}
+                                <span
+                                    onClick={showSidePanel}
+                                    className="toggle-menu Header__hamburger"
+                                >
+                                    <span className="hamburger" />
+                                </span>
+                            </div>
+                        </nav>
+                    </header>
+                </Headroom>
+            </ReactMutationObserver>
         );
     }
 }
@@ -395,19 +430,26 @@ const mapStateToProps = (state, ownProps) => {
         return {
             username: null,
             loggedIn: false,
+            community: state.global.get('community', Map({})),
         };
     }
 
-    let user_profile;
+    // display name used in page title
+    let display_name;
     const route = resolveRoute(ownProps.pathname);
     if (route.page === 'UserProfile') {
-        user_profile = state.global.getIn([
-            'accounts',
-            route.params[0].slice(1),
-        ]);
+        display_name = state.userProfiles.getIn(
+            [
+                'profiles',
+                route.params[0].slice(1),
+                'metadata',
+                'profile',
+                'name',
+            ],
+            null
+        );
     }
 
-    const userPath = state.routing.locationBeforeTransitions.pathname;
     const username = state.user.getIn(['current', 'username']);
     const loggedIn = !!username;
     const current_account_name = username
@@ -415,18 +457,36 @@ const mapStateToProps = (state, ownProps) => {
         : state.offchain.get('account');
 
     const gptEnabled = state.app.getIn(['googleAds', 'gptEnabled']);
-    const walletUrl = state.app.get('walletUrl');
+    const content = state.global.get('content'); // TODO: needed for SSR?
+    let unreadNotificationCount = 0;
+    if (
+        loggedIn &&
+        state.global.getIn([
+            'notifications',
+            current_account_name,
+            'unreadNotifications',
+        ])
+    ) {
+        unreadNotificationCount = state.global.getIn([
+            'notifications',
+            current_account_name,
+            'unreadNotifications',
+            'unread',
+        ]);
+    }
 
     return {
         username,
         loggedIn,
-        userPath,
+        community: state.global.get('community', Map({})),
         nightmodeEnabled: state.user.getIn(['user_preferences', 'nightmode']),
-        account_meta: user_profile,
+        display_name,
         current_account_name,
         showAnnouncement: state.user.get('showAnnouncement'),
+        walletUrl: state.app.get('walletUrl'),
         gptEnabled,
-        walletUrl,
+        content,
+        unreadNotificationCount,
         ...ownProps,
     };
 };
@@ -450,7 +510,26 @@ const mapDispatchToProps = dispatch => ({
     hideSidePanel: () => {
         dispatch(userActions.hideSidePanel());
     },
+    getUnreadAccountNotifications: username => {
+        const query = {
+            account: username,
+        };
+        return dispatch(
+            fetchDataSagaActions.getUnreadAccountNotifications(query)
+        );
+    },
     hideAnnouncement: () => dispatch(userActions.hideAnnouncement()),
+    startNotificationsPolling: username => {
+        const query = {
+            account: username,
+        };
+        const params = {
+            pollAction: fetchDataSagaActions.getUnreadAccountNotifications,
+            pollPayload: query,
+            delay: 600000, // The delay between successive polls
+        };
+        return dispatch(startPolling(params));
+    },
 });
 
 const connectedHeader = connect(mapStateToProps, mapDispatchToProps)(Header);

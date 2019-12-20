@@ -16,6 +16,8 @@ import useRedirects from './redirects';
 import useGeneralApi from './api/general';
 import useUserJson from './json/user_json';
 import usePostJson from './json/post_json';
+import useUserRss from './rss/user_rss';
+import useFeedsRss from './rss/feeds_rss';
 import isBot from 'koa-isbot';
 import session from '@steem/crypto-session';
 import csrf from 'koa-csrf';
@@ -26,7 +28,7 @@ import secureRandom from 'secure-random';
 import userIllegalContent from 'app/utils/userIllegalContent';
 import koaLocale from 'koa-locale';
 import { getSupportedLocales } from './utils/misc';
-import { pinnedPosts } from './utils/PinnedPosts';
+import { specialPosts } from './utils/SpecialPosts';
 import fs from 'fs';
 
 if (cluster.isMaster) console.log('application server starting, please wait.');
@@ -170,13 +172,15 @@ app.use(function*(next) {
     // redirect to home page/feed if known account
     if (this.method === 'GET' && this.url === '/' && this.session.a) {
         this.status = 302;
-        this.redirect(`/@${this.session.a}/feed`);
+        //this.redirect(`/@${this.session.a}/feed`);
+        this.redirect(`/trending/my`);
         return;
     }
+
     // normalize user name url from cased params
     if (
         this.method === 'GET' &&
-        (routeRegex.UserProfile1.test(this.url) ||
+        (routeRegex.UserProfile.test(this.url) ||
             routeRegex.PostNoCategory.test(this.url) ||
             routeRegex.Post.test(this.url))
     ) {
@@ -198,6 +202,7 @@ app.use(function*(next) {
             return;
         }
     }
+
     // normalize top category filtering from cased params
     if (this.method === 'GET' && routeRegex.CategoryFilters.test(this.url)) {
         const p = this.originalUrl.toLowerCase();
@@ -207,6 +212,7 @@ app.use(function*(next) {
             return;
         }
     }
+
     // remember ch, cn, r url params in the session and remove them from url
     if (this.method === 'GET' && /\?[^\w]*(ch=|cn=|r=)/.test(this.url)) {
         let redir = this.url.replace(/((ch|cn|r)=[^&]+)/gi, r => {
@@ -281,7 +287,8 @@ app.use(function*(next) {
 useRedirects(app);
 useUserJson(app);
 usePostJson(app);
-
+useUserRss(app);
+useFeedsRss(app);
 useGeneralApi(app);
 
 // helmet wants some things as bools and some as lists, makes config difficult.
@@ -302,14 +309,14 @@ if (env === 'production') {
 if (env !== 'test') {
     const appRender = require('./app_render');
 
-    // Load the pinned posts and store them on the ctx for later use. Since
+    // Load special posts and store them on the ctx for later use. Since
     // we're inside a generator, we can't `await` here, so we pass a promise
     // so `src/server/app_render.jsx` can `await` on it.
-    app.pinnedPostsPromise = pinnedPosts();
-    // refresh pinned posts every five minutes
+    app.specialPostsPromise = specialPosts();
+    // refresh special posts every five minutes
     setInterval(function() {
         return new Promise(function(resolve, reject) {
-            app.pinnedPostsPromise = pinnedPosts();
+            app.specialPostsPromise = specialPosts();
             resolve();
         });
     }, 300000);

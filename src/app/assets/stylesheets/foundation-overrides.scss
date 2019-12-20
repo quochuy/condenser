@@ -118,6 +118,16 @@ tbody tr:nth-child(even) {
   border-radius: 0 30px;
   border: transparent;
   transition: 0.2s all ease-in-out;
+  outline: none;
+  @include themify($themes) {
+    background-color: themed('modalBackgroundColor');
+    color: themed('modalTextColorPrimary');
+  }
+  label {
+    @include themify($themes) {
+      color: themed('modalTextColorPrimary');
+    }
+  }
   .button {
     @extend .e-btn;
     @extend .e-btn--black;

@@ -3,7 +3,7 @@ import { connect } from 'react-redux';
 import tt from 'counterpart';
 import * as userActions from 'app/redux/UserReducer';
 import * as appActions from 'app/redux/AppReducer';
-import UserList from 'app/components/elements/UserList';
+import MuteList from 'app/components/elements/MuteList';
 
 class Settings extends React.Component {
     constructor(props) {
@@ -47,15 +47,11 @@ class Settings extends React.Component {
 
         const {
             walletUrl,
-            follow,
-            account,
+            ignores,
+            accountname,
             isOwnAccount,
             user_preferences,
         } = this.props;
-        const following =
-            follow && follow.getIn(['getFollowingAsync', account.name]);
-        const ignores =
-            isOwnAccount && following && following.get('ignore_result');
 
         return (
             <div className="Settings">
@@ -68,7 +64,7 @@ class Settings extends React.Component {
                                     href={
                                         walletUrl +
                                         '/@' +
-                                        account.name +
+                                        accountname +
                                         '/settings'
                                     }
                                 >
@@ -119,6 +115,7 @@ class Settings extends React.Component {
                                     {tt('settings_jsx.always_show')}
                                 </option>
                             </select>
+                            <br />
                             <br />
 
                             <label>
@@ -178,10 +175,9 @@ class Settings extends React.Component {
                         <div className="row">
                             <div className="small-12 medium-6 large-6 columns">
                                 <br />
-                                <br />
-                                <UserList
-                                    title={tt('settings_jsx.muted_users')}
-                                    account={account}
+                                <h4>Muted Users</h4>
+                                <MuteList
+                                    account={accountname}
                                     users={ignores}
                                 />
                             </div>
@@ -195,12 +191,22 @@ class Settings extends React.Component {
 export default connect(
     (state, ownProps) => {
         const { accountname } = ownProps.routeParams;
+
+        const isOwnAccount =
+            state.user.getIn(['current', 'username'], '') == accountname;
+        const ignores =
+            isOwnAccount &&
+            state.global.getIn([
+                'follow',
+                'getFollowingAsync',
+                accountname,
+                'ignore_result',
+            ]);
+
         return {
             accountname,
-            account: state.global.getIn(['accounts', accountname]).toJS(),
-            isOwnAccount:
-                state.user.getIn(['current', 'username'], '') == accountname,
-            follow: state.global.get('follow'),
+            isOwnAccount,
+            ignores,
             user_preferences: state.app.get('user_preferences').toJS(),
             walletUrl: state.app.get('walletUrl'),
             ...ownProps,
