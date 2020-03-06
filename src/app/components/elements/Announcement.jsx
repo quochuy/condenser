@@ -4,7 +4,7 @@ import React from 'react';
 export const Announcement = ({ onClose }) => (
     <div className="annoucement-banner">
         <p className="announcement-banner__text">
-            Checkout beta features on
+            Checkout beta features on{' '}
             <a
                 className="announcement-banner__link"
                 href="https://staging.steemulant.com"
